@@ -26,7 +26,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $repo !== null) {
             $geocoder = new Geocoder();
             $results  = $geocoder->geocode($address, 5);
 
-            $repo->saveUnique($address);
+            // Сохраняем только если найдены адреса в Москве
+            if (!empty($results)) {
+                $repo->saveUnique($address);
+            } else {
+                $error = 'Адрес не найден в Москве. Пожалуйста, введите адрес в Москве.';
+            }
         } catch (Throwable $e) {
             $error = 'Ошибка при запросе к геокодеру: ' . htmlspecialchars($e->getMessage());
         }
@@ -55,7 +60,8 @@ if ($repo !== null) {
     <h1>Геокодер адресов Москвы</h1>
     <p class="muted">
         Введите адрес (улица и дом) в Москве. Приложение обратится к API Яндекс Геокодера,
-        сохранит уникальный запрос в MySQL и покажет до 5 найденных результатов.
+        сохранит уникальный запрос в MySQL и покажет до 5 найденных результатов. 
+        Обрабатываются только адреса, расположенные в Москве.
     </p>
 
     <?php if ($error !== null): ?>
@@ -82,6 +88,8 @@ if ($repo !== null) {
                 <th>Полный адрес</th>
                 <th>Район</th>
                 <th>Метро</th>
+                <th>Улица</th>
+                <th>Номер дома</th>
                 <th>Широта</th>
                 <th>Долгота</th>
             </tr>
@@ -92,6 +100,8 @@ if ($repo !== null) {
                     <td><?= htmlspecialchars($row['full_address'] ?? '') ?></td>
                     <td><?= htmlspecialchars($row['district'] ?? '') ?></td>
                     <td><?= htmlspecialchars($row['metro'] ?? '') ?></td>
+                    <td><?= htmlspecialchars($row['street'] ?? '') ?></td>
+                    <td><?= htmlspecialchars($row['house'] ?? '') ?></td>
                     <td><?= htmlspecialchars($row['lat'] ?? '') ?></td>
                     <td><?= htmlspecialchars($row['lon'] ?? '') ?></td>
                 </tr>

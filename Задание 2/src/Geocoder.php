@@ -6,14 +6,12 @@ class Geocoder
 
     public function __construct(?string $apiKey = null)
     {
-
-        $this->apiKey = '858e87f6-1ba0-4897-8c4f-1222ee3e6e84';
+        $this->apiKey = $apiKey ?? getenv('YANDEX_API_KEY') ?: '';
 
         if ($this->apiKey === '') {
             throw new RuntimeException('YANDEX_API_KEY is not configured');
         }
     }
-
 
     /**
      * @return array<int, array<string, string|null>>
@@ -46,11 +44,14 @@ class Geocoder
         }
 
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
+        
         if ($httpCode !== 200) {
-            throw new RuntimeException("Geocoder HTTP error: {$httpCode}");
+            $errorBody = $raw !== false ? $raw : 'No response body';
+            curl_close($ch);
+            throw new RuntimeException("Geocoder HTTP error: {$httpCode}. Response: " . substr($errorBody, 0, 200));
         }
+        
+        curl_close($ch);
 
         $data = json_decode($raw, true, flags: JSON_THROW_ON_ERROR);
 
@@ -80,15 +81,34 @@ class Geocoder
 
             $district = null;
             $metro    = null;
+            $street   = null;
+            $house    = null;
+            $isMoscow = false;
 
             foreach ($components as $comp) {
                 $kind = $comp['kind'] ?? null;
+                $name = $comp['name'] ?? '';
+
+                if ($kind === 'locality' && $name === 'Москва') {
+                    $isMoscow = true;
+                }
                 if ($kind === 'district') {
-                    $district = $comp['name'] ?? null;
+                    $district = $name;
                 }
                 if ($kind === 'metro') {
-                    $metro = $comp['name'] ?? null;
+                    $metro = $name;
                 }
+                if ($kind === 'street') {
+                    $street = $name;
+                }
+                if ($kind === 'house') {
+                    $house = $name;
+                }
+            }
+
+            // Пропускаем адреса не из Москвы
+            if (!$isMoscow) {
+                continue;
             }
 
             $pos = $geo['Point']['pos'] ?? '';
@@ -102,6 +122,8 @@ class Geocoder
                 'full_address' => $addressText,
                 'district'     => $district,
                 'metro'        => $metro,
+                'street'       => $street,
+                'house'        => $house,
                 'lat'          => $lat,
                 'lon'          => $lon,
             ];

@@ -12,7 +12,7 @@ services:
       DB_NAME: geoapp
       DB_USER: geoapp
       DB_PASS: geoapp
-      YANDEX_API_KEY: ВСТАВЬ_СВОЙ_API_КЛЮЧ
+      YANDEX_API_KEY: 858e87f6-1ba0-4897-8c4f-1222ee3e6e84
     depends_on:
       - mysql
 
