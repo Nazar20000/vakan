@@ -14,7 +14,7 @@ class Geocoder
     }
 
     /**
-     * @return array<int, array<string, string|null>>
+     * @return array<int,
      */
     public function geocode(string $address, int $limit = 5): array
     {
