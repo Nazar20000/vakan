@@ -80,6 +80,13 @@ class Geocoder
             $street   = null;
             $house    = null;
             $isMoscow = false;
+            
+            // Получаем координаты заранее для возможного поиска района
+            $pos = $geo['Point']['pos'] ?? '';
+            $lat = $lon = null;
+            if (\is_string($pos) && $pos !== '') {
+                [$lon, $lat] = explode(' ', $pos);
+            }
 
             foreach ($components as $comp) {
                 $kind = $comp['kind'] ?? null;
@@ -118,41 +125,57 @@ class Geocoder
                 $subAdminArea = $adminArea['SubAdministrativeArea'] ?? [];
                 $locality = $adminArea['Locality'] ?? [];
                 $dependentLocality = $locality['DependentLocality'] ?? [];
+                $districtData = $locality['District'] ?? [];
                 
-                if (!empty($subAdminArea['SubAdministrativeAreaName'])) {
+                // Проверяем District в Locality (основное место для районов Москвы)
+                if (!empty($districtData['DistrictName'])) {
+                    $districtName = $districtData['DistrictName'];
+                    if ($districtName !== 'Москва' && $districtName !== 'Moscow' && !empty($districtName)) {
+                        $district = $districtName;
+                    }
+                }
+                
+                // Проверяем SubAdministrativeArea
+                if ($district === null && !empty($subAdminArea['SubAdministrativeAreaName'])) {
                     $subName = $subAdminArea['SubAdministrativeAreaName'];
-                    if ($subName !== 'Москва' && $subName !== 'Moscow') {
+                    if ($subName !== 'Москва' && $subName !== 'Moscow' && !empty($subName)) {
                         $district = $subName;
                     }
                 }
                 
+                // Проверяем DependentLocality
                 if ($district === null && !empty($dependentLocality['DependentLocalityName'])) {
                     $depName = $dependentLocality['DependentLocalityName'];
-                    if ($depName !== 'Москва' && $depName !== 'Moscow') {
+                    if ($depName !== 'Москва' && $depName !== 'Moscow' && !empty($depName)) {
                         $district = $depName;
                     }
                 }
             }
             
+            // Дополнительная проверка в addressData
             if ($district === null) {
                 if (isset($addressData['SubAdministrativeAreaName']) && 
-                    $addressData['SubAdministrativeAreaName'] !== 'Москва') {
+                    $addressData['SubAdministrativeAreaName'] !== 'Москва' &&
+                    !empty($addressData['SubAdministrativeAreaName'])) {
                     $district = $addressData['SubAdministrativeAreaName'];
                 } elseif (isset($addressData['DependentLocalityName']) && 
-                         $addressData['DependentLocalityName'] !== 'Москва') {
+                         $addressData['DependentLocalityName'] !== 'Москва' &&
+                         !empty($addressData['DependentLocalityName'])) {
                     $district = $addressData['DependentLocalityName'];
+                } elseif (isset($addressData['DistrictName']) &&
+                         $addressData['DistrictName'] !== 'Москва' &&
+                         !empty($addressData['DistrictName'])) {
+                    $district = $addressData['DistrictName'];
                 }
+            }
+            
+            // Если район все еще не найден, пытаемся найти его через обратный геокодинг
+            if ($district === null && $lat !== null && $lon !== null) {
+                $district = $this->findDistrictByCoordinates($lat, $lon);
             }
 
             if (!$isMoscow) {
                 continue;
-            }
-
-            $pos = $geo['Point']['pos'] ?? '';
-            $lat = $lon = null;
-
-            if (\is_string($pos) && $pos !== '') {
-                [$lon, $lat] = explode(' ', $pos);
             }
 
             if ($metro === null && $lat !== null && $lon !== null) {
@@ -171,6 +194,53 @@ class Geocoder
         }
 
         return $result;
+    }
+
+    private function findDistrictByCoordinates(string $lat, string $lon): ?string
+    {
+        try {
+            $query = http_build_query([
+                'apikey'   => $this->apiKey,
+                'format'   => 'json',
+                'geocode'  => "{$lon},{$lat}",
+                'kind'     => 'district',
+                'lang'     => 'ru_RU',
+                'results'  => 1,
+            ]);
+
+            $url = "https://geocode-maps.yandex.ru/1.x/?{$query}";
+            
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => 5,
+            ]);
+
+            $raw = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode === 200 && $raw !== false) {
+                $data = json_decode($raw, true);
+                
+                if (isset($data['response']['GeoObjectCollection']['featureMember'][0])) {
+                    $item = $data['response']['GeoObjectCollection']['featureMember'][0];
+                    $geo = $item['GeoObject'] ?? [];
+                    $name = $geo['name'] ?? '';
+                    
+                    // Убираем префиксы типа "район", "Район"
+                    $name = preg_replace('/^(район\s+|Район\s+)/ui', '', $name);
+                    $name = trim($name);
+                    
+                    if (!empty($name) && $name !== 'Москва' && $name !== 'Moscow') {
+                        return $name;
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+        }
+        
+        return null;
     }
 
     private function findNearestMetro(string $lat, string $lon): ?string
