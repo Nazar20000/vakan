@@ -26,7 +26,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $repo !== null) {
             $geocoder = new Geocoder();
             $results  = $geocoder->geocode($address, 5);
 
-            // Сохраняем только если найдены адреса в Москве
             if (!empty($results)) {
                 $repo->saveUnique($address);
             } else {
@@ -42,7 +41,6 @@ if ($repo !== null) {
     try {
         $lastRequests = $repo->getLast(10);
     } catch (Throwable $e) {
-        // Не критично для приложения
     }
 }
 

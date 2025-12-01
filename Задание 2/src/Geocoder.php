@@ -13,9 +13,6 @@ class Geocoder
         }
     }
 
-    /**
-     * @return array<int,
-     */
     public function geocode(string $address, int $limit = 5): array
     {
         $query = http_build_query([
@@ -24,6 +21,7 @@ class Geocoder
             'geocode'  => $address,
             'lang'     => 'ru_RU',
             'results'  => $limit,
+            'kind'     => 'house',
         ]);
 
         $url = "https://geocode-maps.yandex.ru/1.x/?{$query}";
@@ -58,10 +56,6 @@ class Geocoder
         return $this->parseResponse($data, $limit);
     }
 
-    /**
-     * @param array<string, mixed> $data
-     * @return array<int, array<string, string|null>>
-     */
     private function parseResponse(array $data, int $limit): array
     {
         $result = [];
@@ -78,6 +72,8 @@ class Geocoder
             $addressText = $meta['text'] ?? '';
 
             $components = $meta['Address']['Components'] ?? [];
+            $addressData = $meta['Address'] ?? [];
+            $addressDetails = $geo['metaDataProperty']['GeocoderMetaData']['AddressDetails'] ?? [];
 
             $district = null;
             $metro    = null;
@@ -92,12 +88,23 @@ class Geocoder
                 if ($kind === 'locality' && $name === 'Москва') {
                     $isMoscow = true;
                 }
-                if ($kind === 'district') {
-                    $district = $name;
+                
+                if ($district === null) {
+                    if (in_array($kind, [
+                        'district', 
+                        'area', 
+                        'administrative_area_level_3',
+                        'administrative_area_level_2',
+                        'subAdministrativeArea',
+                        'administrative',
+                        'locality_area'
+                    ])) {
+                        if ($name !== 'Москва' && $name !== 'Moscow') {
+                            $district = $name;
+                        }
+                    }
                 }
-                if ($kind === 'metro') {
-                    $metro = $name;
-                }
+                
                 if ($kind === 'street') {
                     $street = $name;
                 }
@@ -105,8 +112,38 @@ class Geocoder
                     $house = $name;
                 }
             }
+            
+            if ($district === null && !empty($addressDetails)) {
+                $adminArea = $addressDetails['Country']['AdministrativeArea'] ?? [];
+                $subAdminArea = $adminArea['SubAdministrativeArea'] ?? [];
+                $locality = $adminArea['Locality'] ?? [];
+                $dependentLocality = $locality['DependentLocality'] ?? [];
+                
+                if (!empty($subAdminArea['SubAdministrativeAreaName'])) {
+                    $subName = $subAdminArea['SubAdministrativeAreaName'];
+                    if ($subName !== 'Москва' && $subName !== 'Moscow') {
+                        $district = $subName;
+                    }
+                }
+                
+                if ($district === null && !empty($dependentLocality['DependentLocalityName'])) {
+                    $depName = $dependentLocality['DependentLocalityName'];
+                    if ($depName !== 'Москва' && $depName !== 'Moscow') {
+                        $district = $depName;
+                    }
+                }
+            }
+            
+            if ($district === null) {
+                if (isset($addressData['SubAdministrativeAreaName']) && 
+                    $addressData['SubAdministrativeAreaName'] !== 'Москва') {
+                    $district = $addressData['SubAdministrativeAreaName'];
+                } elseif (isset($addressData['DependentLocalityName']) && 
+                         $addressData['DependentLocalityName'] !== 'Москва') {
+                    $district = $addressData['DependentLocalityName'];
+                }
+            }
 
-            // Пропускаем адреса не из Москвы
             if (!$isMoscow) {
                 continue;
             }
@@ -116,6 +153,10 @@ class Geocoder
 
             if (\is_string($pos) && $pos !== '') {
                 [$lon, $lat] = explode(' ', $pos);
+            }
+
+            if ($metro === null && $lat !== null && $lon !== null) {
+                $metro = $this->findNearestMetro($lat, $lon);
             }
 
             $result[] = [
@@ -130,5 +171,146 @@ class Geocoder
         }
 
         return $result;
+    }
+
+    private function findNearestMetro(string $lat, string $lon): ?string
+    {
+        try {
+            $query = http_build_query([
+                'apikey'   => $this->apiKey,
+                'format'   => 'json',
+                'geocode'  => "{$lon},{$lat}",
+                'kind'     => 'metro',
+                'lang'     => 'ru_RU',
+                'results'  => 5,
+            ]);
+
+            $url = "https://geocode-maps.yandex.ru/1.x/?{$query}";
+            
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => 10,
+            ]);
+
+            $raw = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode === 200 && $raw !== false) {
+                $data = json_decode($raw, true);
+                
+                if (isset($data['response']['GeoObjectCollection']['featureMember'])) {
+                    foreach ($data['response']['GeoObjectCollection']['featureMember'] as $item) {
+                        $geo = $item['GeoObject'] ?? [];
+                        $name = $geo['name'] ?? '';
+                        
+                        if (!empty($name) && stripos($name, 'метро') !== false) {
+                            $metroName = preg_replace('/\s*(станция\s*)?метро\s*/ui', '', $name);
+                            $metroName = trim($metroName);
+                            if (!empty($metroName)) {
+                                return $metroName;
+                            }
+                            return $name;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+        }
+        
+        return null;
+    }
+
+    private function searchMetroInResponse(string $url): ?string
+    {
+        try {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => 10,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_SSL_VERIFYPEER => false,
+            ]);
+
+            $raw = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode !== 200 || $raw === false || empty($raw)) {
+                return null;
+            }
+
+            $data = json_decode($raw, true);
+            
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                return null;
+            }
+            
+            $features = $data['features'] ?? $data['results'] ?? [];
+            
+            if (!is_array($features) || empty($features)) {
+                return null;
+            }
+            
+            foreach ($features as $feature) {
+                $properties = $feature['properties'] ?? $feature ?? [];
+                $companyMeta = $properties['CompanyMetaData'] ?? [];
+                
+                $name = $properties['name'] ?? $companyMeta['name'] ?? '';
+                $description = $properties['description'] ?? $companyMeta['description'] ?? '';
+                $categories = $properties['Categories'] ?? $companyMeta['Categories'] ?? [];
+                
+                $isMetro = false;
+                if (is_array($categories) && !empty($categories)) {
+                    foreach ($categories as $cat) {
+                        $catName = '';
+                        if (is_array($cat)) {
+                            $catName = $cat['name'] ?? $cat['class'] ?? '';
+                        } else {
+                            $catName = (string)$cat;
+                        }
+                        
+                        if (stripos($catName, 'метро') !== false || 
+                            stripos($catName, 'транспорт') !== false ||
+                            stripos($catName, 'subway') !== false ||
+                            stripos($catName, 'metro') !== false) {
+                            $isMetro = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if ($isMetro || 
+                    stripos($name, 'метро') !== false || 
+                    stripos($description, 'метро') !== false ||
+                    (stripos($name, 'станция') !== false && 
+                     (stripos($name, 'метро') !== false || stripos($description, 'метро') !== false))) {
+                    
+                    $metroName = preg_replace('/\s*(станция\s*)?метро\s*/ui', '', $name);
+                    $metroName = preg_replace('/\s*станция\s*/ui', '', $metroName);
+                    $metroName = preg_replace('/\s*м\.\s*/ui', '', $metroName);
+                    $metroName = trim($metroName);
+                    
+                    if (empty($metroName) || strlen($metroName) < 3) {
+                        if (!empty($description)) {
+                            $metroName = preg_replace('/\s*(станция\s*)?метро\s*/ui', '', $description);
+                            $metroName = trim($metroName);
+                        }
+                    }
+                    
+                    if (!empty($metroName) && strlen($metroName) > 2) {
+                        return $metroName;
+                    }
+                    
+                    if (!empty($name) && stripos($name, 'метро') !== false) {
+                        return $name;
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+        }
+
+        return null;
     }
 }
