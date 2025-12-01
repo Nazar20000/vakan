@@ -81,7 +81,6 @@ class Geocoder
             $house    = null;
             $isMoscow = false;
             
-            // Получаем координаты заранее для возможного поиска района
             $pos = $geo['Point']['pos'] ?? '';
             $lat = $lon = null;
             if (\is_string($pos) && $pos !== '') {
@@ -127,7 +126,6 @@ class Geocoder
                 $dependentLocality = $locality['DependentLocality'] ?? [];
                 $districtData = $locality['District'] ?? [];
                 
-                // Проверяем District в Locality (основное место для районов Москвы)
                 if (!empty($districtData['DistrictName'])) {
                     $districtName = $districtData['DistrictName'];
                     if ($districtName !== 'Москва' && $districtName !== 'Moscow' && !empty($districtName)) {
@@ -135,7 +133,6 @@ class Geocoder
                     }
                 }
                 
-                // Проверяем SubAdministrativeArea
                 if ($district === null && !empty($subAdminArea['SubAdministrativeAreaName'])) {
                     $subName = $subAdminArea['SubAdministrativeAreaName'];
                     if ($subName !== 'Москва' && $subName !== 'Moscow' && !empty($subName)) {
@@ -143,7 +140,6 @@ class Geocoder
                     }
                 }
                 
-                // Проверяем DependentLocality
                 if ($district === null && !empty($dependentLocality['DependentLocalityName'])) {
                     $depName = $dependentLocality['DependentLocalityName'];
                     if ($depName !== 'Москва' && $depName !== 'Moscow' && !empty($depName)) {
@@ -152,7 +148,6 @@ class Geocoder
                 }
             }
             
-            // Дополнительная проверка в addressData
             if ($district === null) {
                 if (isset($addressData['SubAdministrativeAreaName']) && 
                     $addressData['SubAdministrativeAreaName'] !== 'Москва' &&
@@ -169,7 +164,6 @@ class Geocoder
                 }
             }
             
-            // Если район все еще не найден, пытаемся найти его через обратный геокодинг
             if ($district === null && $lat !== null && $lon !== null) {
                 $district = $this->findDistrictByCoordinates($lat, $lon);
             }
@@ -228,7 +222,6 @@ class Geocoder
                     $geo = $item['GeoObject'] ?? [];
                     $name = $geo['name'] ?? '';
                     
-                    // Убираем префиксы типа "район", "Район"
                     $name = preg_replace('/^(район\s+|Район\s+)/ui', '', $name);
                     $name = trim($name);
                     
